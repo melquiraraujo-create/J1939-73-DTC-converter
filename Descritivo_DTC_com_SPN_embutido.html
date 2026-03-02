@@ -234,7 +234,7 @@
       <div class="content">
         <div class="hint">
           Cole um DTC de <b>4 bytes</b> -
-          Ex: <span class="mono">F5 13 0C 01</span> ou <span class="mono">F5130C01</span>
+          Ex: <span class="mono">BE 00 08 01</span> ou <span class="mono">F5130C01</span>
         </div>
 
         <div class="inputRow">
@@ -34809,7 +34809,7 @@ N/A,N/A
     renderEmpty();
   });
   document.getElementById("btnExample").addEventListener("click", () => {
-    document.getElementById("dtc").value = "F5 13 0C 01";
+    document.getElementById("dtc").value = "BE 00 08 01";
     doDecode();
   });
 
