@@ -225,7 +225,7 @@
         <div class="" aria-hidden="true"></div>
         <div>
           <h1>Conversor DTC J1939</h1>
-          <div class="subtitle">Decodifica SPN / FMI / OC / CM a partir de 4 bytes (DM1)</div>
+          <div class="subtitle">Decodifica DTC de 4 bytes e também os 2 bytes de lâmpadas do DM1</div>
         </div>
       </div>
     </div>
@@ -233,12 +233,13 @@
     <div class="card">
       <div class="content">
         <div class="hint">
-          Cole um DTC de <b>4 bytes</b> -
-          Ex: <span class="mono">BE 00 08 01</span> ou <span class="mono">F5130C01</span>
+          Cole um <b>DTC de 4 bytes</b> ou um <b>frame DM1 single frame de 8 bytes</b>.<br>
+          DTC: <span class="mono">F5 13 0C 01</span> ou <span class="mono">F5130C01</span><br>
+          DM1: <span class="mono">00 00 31 8F C8 FE FF FF</span>
         </div>
 
         <div class="inputRow">
-          <input id="dtc" class="mono" placeholder="Digite aqui… Ex: F5130C01" autocomplete="off" />
+          <input id="dtc" class="mono" placeholder="Digite aqui… Ex: F5130C01 ou 00 00 31 8F C8 FE FF FF" autocomplete="off" />
         </div>
 
         <div class="btnRow">
@@ -279,12 +280,44 @@
                 <div class="kLabel">CM</div>
                 <div class="kValue mono" id="cm">-</div>
                 <div class="kSub">Conversion Method</div>
+                <div class="kSubStrong" id="cmDesc">-</div>
               </div>
             </div>
 
             <div class="line">
               <div class="pill"><span class="dot"></span><span>Entrada normalizada:</span> <span class="mono" id="norm">-</span></div>
               <div class="pill">Bytes: <span class="mono" id="bytes">-</span></div>
+              <div class="pill">Modo: <span class="mono" id="mode">-</span></div>
+            </div>
+
+            <div class="line" style="margin-top:18px; padding-top:18px;">
+              <div style="font-size:14px; color:rgba(255,255,255,.88); font-weight:600;">Lâmpadas DM1 (bytes 1 e 2)</div>
+            </div>
+
+            <div class="rowKPI" style="margin-top:12px;">
+              <div class="kpi">
+                <div class="kLabel">MIL · SPN 1213</div>
+                <div class="kValue" style="font-size:18px; line-height:1.2;" id="lampMil">-</div>
+                <div class="kSub mono" id="lampMilBits">Status: - | Flash: -</div>
+              </div>
+
+              <div class="kpi">
+                <div class="kLabel">RSL · SPN 623</div>
+                <div class="kValue" style="font-size:18px; line-height:1.2;" id="lampRsl">-</div>
+                <div class="kSub mono" id="lampRslBits">Status: - | Flash: -</div>
+              </div>
+
+              <div class="kpi">
+                <div class="kLabel">AWL · SPN 624</div>
+                <div class="kValue" style="font-size:18px; line-height:1.2;" id="lampAwl">-</div>
+                <div class="kSub mono" id="lampAwlBits">Status: - | Flash: -</div>
+              </div>
+
+              <div class="kpi">
+                <div class="kLabel">Protect · SPN 987</div>
+                <div class="kValue" style="font-size:18px; line-height:1.2;" id="lampProtect">-</div>
+                <div class="kSub mono" id="lampProtectBits">Status: - | Flash: -</div>
+              </div>
             </div>
 
             <div class="err mono" id="error"></div>
@@ -34727,9 +34760,95 @@ N/A,N/A
   }
 
 
-  function fmiDescription(fmi){
+  
+
+  function doSpnSearch(){
+    if (!spnSearchInput || !spnSearchValEl || !spnSearchDescEl) return;
+    const raw = (spnSearchInput.value || "").trim();
+    const spn = Number(raw.replace(/[^0-9]/g, ""));
+    if (!raw || Number.isNaN(spn)) {
+      spnSearchValEl.textContent = "-";
+      spnSearchDescEl.textContent = "-";
+      return;
+    }
+    spnSearchValEl.textContent = String(spn);
+    const desc = spnDescription(spn);
+    spnSearchDescEl.textContent = desc ? desc : "SPN não pertence a SAE J1939 / Proprietário";
+  }
+
+function fmiDescription(fmi){
     if (fmi >= 24 && fmi <= 30) return "Reserved";
     return FMI_DESC[fmi] || "Unknown / Not defined";
+  }
+
+  function lampCommandText(kind, statusBits, flashBits){
+    const key = `${statusBits}${flashBits}`;
+    const generic = {
+      "0000": "Off, don’t flash",
+      "0001": "Off",
+      "0011": "Off",
+      "0100": "On, slow flash",
+      "0101": "On, fast flash",
+      "0111": "On, don’t flash",
+      "1010": "SAE reserved",
+      "1011": "SAE reserved",
+      "1100": "SAE reserved",
+      "1101": "SAE reserved",
+      "1110": "SAE reserved",
+      "1111": "Don’t care"
+    };
+
+    if (kind === "mil") {
+      const milMap = {
+        "0010": "Off, class C previously active [1]",
+        "0110": "On, class C active",
+        "1000": "Short MIL previously active [1]",
+        "1001": "Short MIL active"
+      };
+      if (milMap[key]) return milMap[key];
+    }
+
+    if (generic[key]) return generic[key];
+    return "SAE reserved";
+  }
+
+  function lampStateBitsLabel(bits){
+    return ({"00":"Off","01":"On","10":"Special","11":"Reserved / Don’t care"})[bits] || "-";
+  }
+
+  function lampFlashBitsLabel(bits){
+    return ({"00":"Slow flash","01":"Fast flash","10":"Special / reserved","11":"Do not flash / N/A"})[bits] || "-";
+  }
+
+  function decodeDm1Lamps(byte1, byte2){
+    const milStatus = ((byte1 >> 6) & 0x03).toString(2).padStart(2, "0");
+    const rslStatus = ((byte1 >> 4) & 0x03).toString(2).padStart(2, "0");
+    const awlStatus = ((byte1 >> 2) & 0x03).toString(2).padStart(2, "0");
+    const protectStatus = (byte1 & 0x03).toString(2).padStart(2, "0");
+
+    const milFlash = ((byte2 >> 6) & 0x03).toString(2).padStart(2, "0");
+    const rslFlash = ((byte2 >> 4) & 0x03).toString(2).padStart(2, "0");
+    const awlFlash = ((byte2 >> 2) & 0x03).toString(2).padStart(2, "0");
+    const protectFlash = (byte2 & 0x03).toString(2).padStart(2, "0");
+
+    return {
+      mil: {
+        text: lampCommandText("mil", milStatus, milFlash),
+        bits: `Status: ${milStatus} (${lampStateBitsLabel(milStatus)}) | Flash: ${milFlash} (${lampFlashBitsLabel(milFlash)})`
+      },
+      rsl: {
+        text: lampCommandText("rsl", rslStatus, rslFlash),
+        bits: `Status: ${rslStatus} (${lampStateBitsLabel(rslStatus)}) | Flash: ${rslFlash} (${lampFlashBitsLabel(rslFlash)})`
+      },
+      awl: {
+        text: lampCommandText("awl", awlStatus, awlFlash),
+        bits: `Status: ${awlStatus} (${lampStateBitsLabel(awlStatus)}) | Flash: ${awlFlash} (${lampFlashBitsLabel(awlFlash)})`
+      },
+      protect: {
+        text: lampCommandText("protect", protectStatus, protectFlash),
+        bits: `Status: ${protectStatus} (${lampStateBitsLabel(protectStatus)}) | Flash: ${protectFlash} (${lampFlashBitsLabel(protectFlash)})`
+      }
+    };
   }
 
   // J1939 DTC (4 bytes): B0 B1 B2 B3
@@ -34737,50 +34856,107 @@ N/A,N/A
   // FMI = B2 & 0x1F
   // OC  = B3 & 0x7F
   // CM  = (B3 >> 7) & 0x01
-  function decodeDtc4(hexStr){
-    const norm = cleanHex(hexStr);
-
-    if(norm.length !== 8){
-      throw new Error("DTC precisa ter 4 bytes (8 hex). Ex: F5130C01");
-    }
-
-    const b0 = parseInt(norm.slice(0,2), 16);
-    const b1 = parseInt(norm.slice(2,4), 16);
-    const b2 = parseInt(norm.slice(4,6), 16);
-    const b3 = parseInt(norm.slice(6,8), 16);
-
+  function decodeDtcBytes(b0, b1, b2, b3){
     const spn = b0 + (b1 << 8) + ((b2 & 0xE0) << 11);
     const fmi = b2 & 0x1F;
     const oc  = b3 & 0x7F;
     const cm  = (b3 >> 7) & 0x01;
 
     return {
-      norm,
       bytes: [toHex(b0), toHex(b1), toHex(b2), toHex(b3)],
       spn, fmi, oc, cm,
       fmiDesc: fmiDescription(fmi)
     };
   }
 
+  function decodeInput(hexStr){
+    const norm = cleanHex(hexStr);
+
+    if(norm.length !== 8 && norm.length !== 16){
+      throw new Error("Entrada precisa ter 4 bytes (DTC) ou 8 bytes (DM1). Ex: F5130C01 ou 0000318FC8FEFFFF");
+    }
+
+    const bytes = [];
+    for (let i = 0; i < norm.length; i += 2) {
+      bytes.push(parseInt(norm.slice(i, i + 2), 16));
+    }
+
+    if (bytes.length === 4) {
+      return {
+        mode: "DTC 4 bytes",
+        norm,
+        bytes: bytes.map(toHex),
+        lamps: null,
+        ...decodeDtcBytes(bytes[0], bytes[1], bytes[2], bytes[3])
+      };
+    }
+
+    const lamps = decodeDm1Lamps(bytes[0], bytes[1]);
+    const hasDtc = !(bytes[2] === 0x00 && bytes[3] === 0x00 && bytes[4] === 0x00 && bytes[5] === 0x00);
+    const dtc = hasDtc ? decodeDtcBytes(bytes[2], bytes[3], bytes[4], bytes[5]) : {
+      bytes: [toHex(bytes[2]), toHex(bytes[3]), toHex(bytes[4]), toHex(bytes[5])],
+      spn: "-",
+      fmi: "-",
+      oc: "-",
+      cm: "-",
+      fmiDesc: "-"
+    };
+
+    return {
+      mode: "DM1 single frame",
+      norm,
+      bytes: bytes.map(toHex),
+      lamps,
+      ...dtc
+    };
+  }
+
   function setText(id, val){ document.getElementById(id).textContent = val; }
 
   function renderEmpty(){
-    setText("spn","-"); setText("spnDesc","-"); setText("fmi","-"); setText("oc","-"); setText("cm","-");
+    setText("spn","-"); setText("spnDesc","-"); setText("fmi","-"); setText("oc","-"); setText("cm","-"); setText("cmDesc","-");
     setText("fmiDesc","-");
-    setText("norm","-"); setText("bytes","-");
+    setText("norm","-"); setText("bytes","-"); setText("mode","-");
+    setText("lampMil","-"); setText("lampMilBits","Status: - | Flash: -");
+    setText("lampRsl","-"); setText("lampRslBits","Status: - | Flash: -");
+    setText("lampAwl","-"); setText("lampAwlBits","Status: - | Flash: -");
+    setText("lampProtect","-"); setText("lampProtectBits","Status: - | Flash: -");
     setText("error","");
   }
 
   function renderOk(d){
     setText("spn", String(d.spn));
-    const spnDesc = spnDescription(d.spn);
-    setText("spnDesc", spnDesc ? spnDesc : "SPN não pertence a SAE J1939 - (Proprietário)");
+    const spnDesc = d.spn === "-" ? "-" : spnDescription(d.spn);
+    setText("spnDesc", d.spn === "-" ? "-" : (spnDesc ? spnDesc : "SPN não pertence a SAE J1939 / Proprietário"));
     setText("fmi", String(d.fmi));
     setText("oc",  String(d.oc));
     setText("cm",  String(d.cm));
+    setText("cmDesc", d.cm === "-" ? "-" : (d.cm === 0 ? "Padrão SAE" : "Proprietário"));
     setText("fmiDesc", d.fmiDesc);
     setText("norm", d.norm);
     setText("bytes", d.bytes.join(" "));
+    setText("mode", d.mode || "-");
+
+    if (d.lamps) {
+      setText("lampMil", d.lamps.mil.text);
+      setText("lampMilBits", d.lamps.mil.bits);
+      setText("lampRsl", d.lamps.rsl.text);
+      setText("lampRslBits", d.lamps.rsl.bits);
+      setText("lampAwl", d.lamps.awl.text);
+      setText("lampAwlBits", d.lamps.awl.bits);
+      setText("lampProtect", d.lamps.protect.text);
+      setText("lampProtectBits", d.lamps.protect.bits);
+    } else {
+      setText("lampMil", "Disponível só em DM1 de 8 bytes");
+      setText("lampMilBits", "Status: - | Flash: -");
+      setText("lampRsl", "Disponível só em DM1 de 8 bytes");
+      setText("lampRslBits", "Status: - | Flash: -");
+      setText("lampAwl", "Disponível só em DM1 de 8 bytes");
+      setText("lampAwlBits", "Status: - | Flash: -");
+      setText("lampProtect", "Disponível só em DM1 de 8 bytes");
+      setText("lampProtectBits", "Status: - | Flash: -");
+    }
+
     setText("error", "");
   }
 
@@ -34796,7 +34972,7 @@ N/A,N/A
         renderEmpty();
         return;
       }
-      const d = decodeDtc4(raw);
+      const d = decodeInput(raw);
       renderOk(d);
     }catch(e){
       renderErr(e.message || String(e));
@@ -34809,7 +34985,7 @@ N/A,N/A
     renderEmpty();
   });
   document.getElementById("btnExample").addEventListener("click", () => {
-    document.getElementById("dtc").value = "BE 00 08 01";
+    document.getElementById("dtc").value = "F5 13 0C 01";
     doDecode();
   });
 
@@ -34818,9 +34994,18 @@ N/A,N/A
   });
 
   renderEmpty();
+
+  if (spnSearchBtn) spnSearchBtn.addEventListener("click", doSpnSearch);
+  if (spnSearchInput) spnSearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doSpnSearch();
+  });
+
 </script>
 
-  <div style="text-align:center;margin:18px auto 0;color:rgba(255,255,255,.55);font-size:13px;max-width:980px;">
+  
+
+
+<div style="text-align:center;margin:18px auto 0;color:rgba(255,255,255,.55);font-size:13px;max-width:980px;">
     J1939 Tools - Developed by Melquizedeque Araújo
   </div>
 
